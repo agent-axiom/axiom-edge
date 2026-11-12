@@ -439,12 +439,21 @@ class EvalPage extends StatelessWidget {
               label: const Text('Запустить'),
             ),
             const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: state.evals.isNotEmpty && !state.busy
-                  ? state.exportResults
-                  : null,
-              icon: const Icon(Icons.ios_share),
-              label: const Text('JSON'),
+            Builder(
+              builder: (buttonContext) => OutlinedButton.icon(
+                onPressed: state.evals.isNotEmpty && !state.busy
+                    ? () async {
+                        final box =
+                            buttonContext.findRenderObject()! as RenderBox;
+                        await state.exportResults(
+                          sharePositionOrigin:
+                              box.localToGlobal(Offset.zero) & box.size,
+                        );
+                      }
+                    : null,
+                icon: const Icon(Icons.ios_share),
+                label: const Text('JSON'),
+              ),
             ),
           ],
         ),

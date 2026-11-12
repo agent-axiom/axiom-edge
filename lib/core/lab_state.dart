@@ -284,7 +284,7 @@ class LabState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> exportResults() async {
+  Future<void> exportResults({Rect? sharePositionOrigin}) async {
     final model = active;
     if (model == null || evals.isEmpty) return;
     final payload = {
@@ -313,7 +313,11 @@ class LabState extends ChangeNotifier {
       flush: true,
     );
     await SharePlus.instance.share(
-      ShareParams(files: [XFile(file.path)], text: 'Axiom Edge benchmark'),
+      ShareParams(
+        files: [XFile(file.path)],
+        text: 'Axiom Edge benchmark',
+        sharePositionOrigin: sharePositionOrigin,
+      ),
     );
   }
 

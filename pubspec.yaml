@@ -17,8 +17,10 @@ dependencies:
   path: ^1.9.1
   http: ^1.6.0
   crypto: ^3.0.8
-  device_info_plus: ^13.3.0
-  share_plus: ^13.3.1
+  # 13.2+ requires the newer FlutterFramework SwiftPM package on iOS.
+  # Keep these compatible with the pinned Flutter 3.38.6 toolchain.
+  device_info_plus: 13.1.0
+  share_plus: 13.1.0
 
 
 dev_dependencies:

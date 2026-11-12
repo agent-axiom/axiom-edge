@@ -3,6 +3,8 @@
 **Open-source offline LLM harness for Android and iOS.** Import, download,
 chat with, benchmark and smoke-test small on-device language models.
 
+Android APK downloads: [GitHub Releases](https://github.com/agent-axiom/axiom-edge/releases).
+
 ## Status
 
 **v0.1.1 prototype; not yet tested on physical phones.**
