@@ -1,0 +1,37 @@
+name: axiom_edge
+description: Offline model lab for Android and iOS — import, chat, benchmark and evaluate local LLMs.
+publish_to: none
+version: 0.1.1+2
+
+environment:
+  sdk: '>=3.10.7 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  llamadart: 0.19.3
+  llamadart_llama_cpp_flutter: 0.19.3
+  mnn_engine: 0.2.0
+  file_picker: ^13.3.3
+  path_provider: ^2.1.6
+  path: ^1.9.1
+  http: ^1.6.0
+  crypto: ^3.0.8
+  device_info_plus: ^13.3.0
+  share_plus: ^13.3.1
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/evals/smoke.json
+
+hooks:
+  user_defines:
+    llamadart:
+      llamadart_native_runtimes: [llama_cpp]

@@ -1,0 +1,20 @@
+{
+  "suite": "pocket-smoke-v1",
+  "cases": [
+    {
+      "id": "literal-answer",
+      "prompt": "Answer with one digit only: what is 2 + 2?",
+      "assertion": {"kind": "exact", "value": "4"}
+    },
+    {
+      "id": "structured-json",
+      "prompt": "Return a JSON object only, with the key success set to true. No Markdown.",
+      "assertion": {"kind": "json_valid"}
+    },
+    {
+      "id": "instruction-following",
+      "prompt": "Write a short sentence containing the word satellite.",
+      "assertion": {"kind": "contains", "value": "satellite"}
+    }
+  ]
+}

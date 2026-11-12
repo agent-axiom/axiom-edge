@@ -1,0 +1,20 @@
+name: Rust core CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+        working-directory: rust/axiom_edge_core
+      - run: cargo clippy --locked --all-targets -- -D warnings
+        working-directory: rust/axiom_edge_core
+      - run: cargo test --locked
+        working-directory: rust/axiom_edge_core

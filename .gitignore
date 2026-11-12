@@ -1,0 +1,24 @@
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+/coverage/
+/ios/Pods/
+/ios/.symlinks/
+/ios/Flutter/ephemeral/
+/android/.gradle/
+/android/.kotlin/
+/android/local.properties
+*.iml
+.idea/
+.DS_Store
+# Flutter 3.38.6 cannot resolve SwiftPM-only iOS plugins on Linux.
+# Generate the iOS shell only on macOS; keep it out of shared checkouts.
+/ios/
+
+# Python bootstrap tests
+__pycache__/
+*.py[cod]
