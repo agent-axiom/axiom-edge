@@ -3,7 +3,7 @@ name: Mobile CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ['v*', '!v*-build.*']
   pull_request:
   workflow_dispatch:
 
@@ -15,6 +15,10 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
+  rust:
+    name: Rust checks
+    uses: ./.github/workflows/rust.yml
+
   android:
     name: Android ARM64 · APK
     runs-on: ubuntu-latest
@@ -43,11 +47,15 @@ jobs:
         run: flutter test --no-pub
       - name: Release APK
         run: flutter build apk --no-pub --release --target-platform android-arm64 --split-per-abi
+      - name: Prepare Android download
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/axiom-edge-android-arm64.apk
       - name: Store APK in workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: axiom-edge-android-arm64
-          path: build/app/outputs/flutter-apk/*arm64-v8a-release.apk
+          path: dist/axiom-edge-android-arm64.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -77,32 +85,61 @@ jobs:
         run: python3 tool/bootstrap.py --platforms ios --configure-only
       - name: Build without Apple signing
         run: flutter build ios --no-pub --release --no-codesign
+      - name: Archive unsigned iOS app for developers
+        run: |
+          mkdir -p dist
+          ditto -c -k --keepParent build/ios/iphoneos/Runner.app dist/axiom-edge-ios-unsigned.zip
+      - name: Store unsigned iOS archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: axiom-edge-ios-unsigned
+          path: dist/axiom-edge-ios-unsigned.zip
+          if-no-files-found: error
+          retention-days: 30
 
   release:
-    name: Publish Android APK to GitHub Releases
-    # Publication runs only for version tags, never for PRs or ordinary pushes.
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: android
+    name: Publish application downloads
+    # All dependencies must succeed. PRs never receive publication permissions.
+    if: >-
+      (github.event_name == 'push' &&
+        (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    needs: [android, ios, rust]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Fetch the APK built and tested in this run
         uses: actions/download-artifact@v4
         with:
           name: axiom-edge-android-arm64
           path: dist
-      - name: Calculate SHA-256 checksum
-        shell: bash
-        run: |
-          cd dist
-          sha256sum *.apk > SHA256SUMS
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Fetch the unsigned iOS archive from this run
+        uses: actions/download-artifact@v4
         with:
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
-            dist/*.apk
-            dist/SHA256SUMS
+          name: axiom-edge-ios-unsigned
+          path: dist
+      - name: Prepare verified downloads and direct links
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_RUN_NUMBER: ${{ github.run_number }}
+          RELEASE_REF: ${{ github.ref }}
+        run: >-
+          python3 tool/release.py prepare
+          --repository "$RELEASE_REPOSITORY"
+          --commit "$RELEASE_COMMIT"
+          --run-id "$RELEASE_RUN_ID"
+          --run-number "$RELEASE_RUN_NUMBER"
+          --ref "$RELEASE_REF"
+          --directory dist
+      - name: Publish complete GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tool/release.py publish --directory dist
