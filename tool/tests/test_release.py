@@ -54,6 +54,9 @@ class FakeGitHub:
         advance_main_after_upload: bool = False,
         annotated_tag: bool = False,
         digest_available_after: int | None = None,
+        hide_draft: bool = False,
+        native_missing_reads: int = 0,
+        native_always_missing: bool = False,
     ) -> None:
         self.directory = directory
         self.manifest = json.loads((directory / "release.json").read_text())
@@ -69,6 +72,10 @@ class FakeGitHub:
         self.advance_main_after_upload = advance_main_after_upload
         self.annotated_tag = annotated_tag
         self.digest_available_after = digest_available_after
+        self.hide_draft = hide_draft
+        self.native_missing_reads = native_missing_reads
+        self.native_always_missing = native_always_missing
+        self.native_reads = 0
         self.asset_reads = 0
         self.calls: list[tuple[object, ...]] = []
         self.uploaded = False
@@ -105,15 +112,12 @@ class FakeGitHub:
             self.tag_commit = str(fields["sha"])
             return {"object": {"sha": self.tag_commit}}
         if endpoint == prefix + "releases":
-            if not self.exists:
+            if not self.exists or (self.hide_draft and self.draft):
                 return []
-            return [{
-                "id": 42,
-                "draft": self.draft,
-                "tag_name": self.tag,
-                "html_url": self.url,
-                "assets": self.assets,
-            }]
+            return [self.release_record()]
+        if endpoint == prefix + "releases/42":
+            assert self.exists
+            return self.release_record()
         if endpoint == prefix + "releases/42/assets":
             self.asset_reads += 1
             if self.digest_available_after is not None and self.asset_reads >= self.digest_available_after:
@@ -121,6 +125,25 @@ class FakeGitHub:
                     asset["digest"] = metadata(self.directory / str(asset["name"]))["digest"]
             return self.assets
         raise AssertionError(f"Unexpected GitHub API call: {method} {endpoint}")
+
+    def release_record(self) -> dict[str, object]:
+        return {
+            "id": 42,
+            "draft": self.draft,
+            "tag_name": self.tag,
+            "html_url": self.url,
+            "assets": self.assets,
+        }
+
+    def release_view(self, repository: str, tag: str) -> object:
+        self.calls.append(("release_view", repository, tag))
+        assert repository == REPOSITORY and tag == self.tag
+        if not self.exists:
+            return None
+        self.native_reads += 1
+        if self.native_always_missing or self.native_reads <= self.native_missing_reads:
+            return None
+        return {"databaseId": 42, "isDraft": self.draft, "tagName": self.tag}
 
     @staticmethod
     def assert_missing_allowed(allowed: bool) -> None:
@@ -229,6 +252,36 @@ class GitHubCLIErrorTest(unittest.TestCase):
         self.assertIn("1", message)
         self.assertNotIn("secret-placeholder", message)
         self.assertNotIn(result.stderr, message)
+
+    def test_native_release_lookup_accepts_only_exact_not_found_as_absence(self) -> None:
+        result = release.subprocess.CompletedProcess(
+            args=["gh", "release", "view", "v0.1.2"],
+            returncode=1,
+            stdout="",
+            stderr="release not found\n",
+        )
+        with patch.object(release.subprocess, "run", return_value=result):
+            self.assertIsNone(release.GitHubCLI().release_view(REPOSITORY, "v0.1.2"))
+        for stderr in (
+            "gh: secret-placeholder (HTTP 403)",
+            "gh: access denied; release not found",
+        ):
+            result.stderr = stderr
+            with self.subTest(stderr=stderr), patch.object(release.subprocess, "run", return_value=result):
+                with self.assertRaises(release.ReleaseError) as raised:
+                    release.GitHubCLI().release_view(REPOSITORY, "v0.1.2")
+            self.assertNotIn("secret-placeholder", str(raised.exception))
+
+    def test_native_release_lookup_preserves_structured_metadata(self) -> None:
+        payload = {"databaseId": 42, "isDraft": True, "tagName": "v0.1.2"}
+        result = release.subprocess.CompletedProcess(
+            args=["gh", "release", "view", "v0.1.2"],
+            returncode=0,
+            stdout=json.dumps(payload),
+            stderr="",
+        )
+        with patch.object(release.subprocess, "run", return_value=result):
+            self.assertEqual(release.GitHubCLI().release_view(REPOSITORY, "v0.1.2"), payload)
 
 
 class PrepareReleaseTest(ReleaseTestCase):
@@ -380,6 +433,62 @@ class PublishReleaseTest(ReleaseTestCase):
         cli = FakeGitHub(self.directory, tag_commit=COMMIT, existing=True, draft=True)
         self.assertEqual(release.publish(self.directory, cli), cli.url)
         self.assertEqual([call[2] for call in cli.commands()], ["upload", "edit"])
+
+    def test_native_lookup_resumes_draft_hidden_from_rest_listing(self) -> None:
+        self.prepare()
+        cli = FakeGitHub(self.directory, tag_commit=COMMIT, existing=True, draft=True, hide_draft=True)
+        self.assertEqual(release.publish(self.directory, cli), cli.url)
+        self.assertEqual([call[2] for call in cli.commands()], ["upload", "edit"])
+        self.assertEqual(cli.native_reads, 1)
+        self.assertTrue(any(call[0] == "release_view" for call in cli.calls))
+        self.assertTrue(any(call[0] == "request" and str(call[2]).endswith("/releases/42") for call in cli.calls))
+
+    def test_post_create_lookup_retries_without_creating_another_draft(self) -> None:
+        self.prepare()
+        cli = FakeGitHub(self.directory, hide_draft=True, native_missing_reads=2)
+        with patch.object(release.time, "sleep") as sleep:
+            self.assertEqual(release.publish(self.directory, cli), cli.url)
+        self.assertEqual(cli.native_reads, 3)
+        self.assertEqual([call[2] for call in cli.commands()], ["create", "upload", "edit"])
+        self.assertEqual(sleep.call_args_list, [((2,),), ((2,),)])
+
+    def test_permanently_missing_new_draft_has_bounded_lookup_and_no_second_create(self) -> None:
+        self.prepare()
+        cli = FakeGitHub(self.directory, hide_draft=True, native_always_missing=True)
+        with patch.object(release.time, "sleep") as sleep, self.assertRaises(release.ReleaseError):
+            release.publish(self.directory, cli)
+        self.assertEqual(cli.native_reads, 3)
+        self.assertEqual([call[2] for call in cli.commands()], ["create"])
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_malformed_or_ambiguous_native_metadata_is_not_followed(self) -> None:
+        manifest = self.prepare()
+        valid = {"databaseId": 42, "isDraft": True, "tagName": manifest["tag"]}
+        malformed = [
+            [{**valid}, {**valid}],
+            {**valid, "databaseId": True},
+            {**valid, "databaseId": 0},
+            {**valid, "isDraft": "true"},
+            {**valid, "tagName": "other-tag"},
+        ]
+        for value in malformed:
+            cli = FakeGitHub(self.directory, tag_commit=COMMIT, existing=True, draft=True, hide_draft=True)
+            with self.subTest(value=value), patch.object(cli, "release_view", return_value=value):
+                with self.assertRaises(release.ReleaseError):
+                    release.publish(self.directory, cli)
+            self.assertEqual(cli.commands(), [])
+            self.assertFalse(any(call[1] == "POST" for call in cli.calls if call[0] == "request"))
+
+    def test_native_lookup_id_must_agree_with_rest_tag_and_draft(self) -> None:
+        self.prepare()
+        for changes in ({"id": 41}, {"tag_name": "other-tag"}, {"draft": False}):
+            cli = FakeGitHub(self.directory, tag_commit=COMMIT, existing=True, draft=True, hide_draft=True)
+            native = {"databaseId": 42, "isDraft": True, "tagName": cli.tag}
+            record = {**cli.release_record(), **changes}
+            with self.subTest(changes=changes), patch.object(cli, "release_view", return_value=native), patch.object(cli, "release_record", return_value=record):
+                with self.assertRaises(release.ReleaseError):
+                    release.publish(self.directory, cli)
+            self.assertEqual(cli.commands(), [])
 
     def test_resumed_draft_refreshes_title_and_verified_notes_at_publish(self) -> None:
         manifest = self.prepare()
