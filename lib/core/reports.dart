@@ -50,7 +50,7 @@ Map<String, Object?> buildEvaluationReport({
   'status': status,
   'finished_at': finishedAt?.toUtc().toIso8601String(),
   'runtime': runnerConfiguration,
-  if (error != null) 'error': error,
+  'error': ?error,
   if (interruptedCase != null)
     'interrupted_case': {
       ...interruptedCase.toJson(),
