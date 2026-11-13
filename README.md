@@ -7,7 +7,10 @@ Android APK downloads: [GitHub Releases](https://github.com/agent-axiom/axiom-ed
 
 ## Status
 
-**v0.1.1 prototype; not yet tested on physical phones.**
+**v0.1.2 development prototype.** A user-supplied v0.1.1 GGUF smoke export
+from Nothing A059P / Android 17 reports 2 of 3 checks passed; that phone run
+has not been independently reproduced. The new sustained benchmark still
+needs an on-device run.
 
 Local validation on 2026-11-10:
 
@@ -36,6 +39,8 @@ Performance measurements have not been independently verified.
 | Streaming local chat | Yes | Yes, GGUF |
 | Deterministic smoke evals (exact, JSON, contains) | Yes | Yes |
 | TTFT + native/sampled throughput + JSON export | Yes | Yes |
+| Warm benchmark: 2 warmups + 5 repeated long generations | Yes | Yes, GGUF |
+| Median/p90 and replay inputs in JSON schema 2.0 | Yes | Yes |
 
 Official model sources:
 
@@ -85,8 +90,9 @@ On the phone:
 1. Open **Models**, select **Download** for Pocket GGUF; or **Import GGUF**.
 2. Tap the stored model to load it.
 3. Open **Chat** for streaming responses.
-4. Open **Checks** to run the deterministic `pocket-smoke-v1` suite.
-5. Export the results as JSON through the platform share sheet.
+4. Open **Checks**, tap **Измерить скорость** for the warm benchmark,
+   or **Проверить ответы** for the separate `pocket-smoke-v1` suite.
+5. Export each result using its own JSON button through the share sheet.
 
 On Android, MNN can also import a **directory** through SAF; importing a
 single `llm.mnn` file is insufficient. The downloaded MNN weights may need
@@ -97,13 +103,26 @@ re-exporting / a matching MNN native runtime if you see `Load module failed`.
 - Native llama.cpp timing comes from `getPerformanceContext()`. Decode and
   prefill rates are omitted if the backend does not report them.
 - MNN streams via a loopback server. Its decode rate (only if the SSE response
-  includes `completion_tokens`) is a **wall-clock estimate**, not equivalent
+  includes `completion_tokens`) is a **whole-request wall-clock estimate**, not equivalent
   to native llama.cpp eval timing.
 - Time to first text is observed at the application layer and includes
   scheduling/buffering; it is not necessarily the backend TTFT.
 - The bundled 3-case suite is a smoke test, **not** a scientific leaderboard.
+- The speed benchmark uses 2 warmups and 5 measured generations, each capped
+  at 256 tokens. Outputs below 128 reported decode tokens are excluded from
+  throughput summaries but retained in raw results and latency summaries.
+- GGUF requests temperature 0, seed 42 and no prompt-prefix reuse.
+  MNN cannot enforce seed or prefix-cache controls through its current API;
+  its model-load sampler can determine effective temperature behavior.
+- Sources are summarized separately. Median and nearest-rank p90 use per-run
+  values; with five valid values p90 is the maximum.
+- JSON schema 2.0 preserves prompts, assertions, requested settings, runtime
+  capabilities, run/export times, warmups, measured samples and incomplete state.
 - No memory/temperature tracking, cold-start trials, download resume,
   quantization provenance verification or iOS MNN engine in v0.1.
+
+See [benchmark protocol](docs/BENCHMARK.md) and
+[engine measurement notes](docs/BENCHMARK_ENGINE_NOTES.md).
 
 ## Publish under agent-axiom
 

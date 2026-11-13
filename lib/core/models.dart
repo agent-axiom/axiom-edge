@@ -79,10 +79,12 @@ class InferenceMetrics {
     if (tokens == null ||
         tokens <= 0 ||
         milliseconds == null ||
+        !milliseconds.isFinite ||
         milliseconds <= 0) {
       return null;
     }
-    return tokens * 1000.0 / milliseconds;
+    final value = tokens * 1000.0 / milliseconds;
+    return value.isFinite ? value : null;
   }
 }
 
@@ -104,6 +106,12 @@ class EvalCase {
   final String kind;
   final String? expected;
 
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'prompt': prompt,
+    'assertion': {'kind': kind, if (expected != null) 'value': expected},
+  };
+
   factory EvalCase.fromJson(Map<String, dynamic> json) {
     final a = json['assertion'] as Map<String, dynamic>;
     return EvalCase(
@@ -117,17 +125,23 @@ class EvalCase {
 
 class EvalResult {
   const EvalResult({
-    required this.caseId,
+    required this.test,
     required this.passed,
     required this.response,
     required this.metrics,
+    required this.generation,
   });
-  final String caseId;
+  final EvalCase test;
+  String get caseId => test.id;
   final bool passed;
   final String response;
   final InferenceMetrics metrics;
+  final Map<String, Object?> generation;
   Map<String, Object?> toJson() => {
     'case_id': caseId,
+    'prompt': test.prompt,
+    'assertion': test.toJson()['assertion'],
+    'generation': generation,
     'passed': passed,
     'response': response,
     'metrics': metrics.toJson(),

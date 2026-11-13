@@ -7,6 +7,8 @@ void main() {
     expect(InferenceMetrics.rate(0, 1000), isNull);
     expect(InferenceMetrics.rate(128, 0), isNull);
     expect(InferenceMetrics.rate(null, 200), isNull);
+    expect(InferenceMetrics.rate(128, double.nan), isNull);
+    expect(InferenceMetrics.rate(128, double.infinity), isNull);
   });
 
   test('JSON schema probe rejects non-object and malformed JSON', () {
