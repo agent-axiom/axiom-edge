@@ -187,7 +187,8 @@ class ReleaseTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        # macOS temporary paths can pass through /var -> /private/var.
+        self.root = Path(self.temporary.name).resolve()
         self.directory = self.root / "dist"
         self.directory.mkdir()
         self.pubspec = self.root / "pubspec.yaml"
@@ -318,6 +319,13 @@ class PrepareReleaseTest(ReleaseTestCase):
 
 
 class PublishReleaseTest(ReleaseTestCase):
+    def test_parent_symlink_is_normalized_before_publishing(self) -> None:
+        alias = self.root / "parent-alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.prepare(directory=alias / "dist")
+        cli = FakeGitHub(self.directory)
+        self.assertEqual(release.publish(alias / "dist", cli), cli.url)
+
     def test_new_release_is_draft_until_all_asset_hashes_are_verified(self) -> None:
         self.prepare()
         cli = FakeGitHub(self.directory)
