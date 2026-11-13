@@ -3,7 +3,14 @@
 **Open-source offline LLM harness for Android and iOS.** Import, download,
 chat with, benchmark and smoke-test small on-device language models.
 
-Android APK downloads: [GitHub Releases](https://github.com/agent-axiom/axiom-edge/releases).
+**[Download Android APK (ARM64)](https://github.com/agent-axiom/axiom-edge/releases/latest/download/axiom-edge-android-arm64.apk)**
+
+[All downloads and checksums](https://github.com/agent-axiom/axiom-edge/releases/latest)
+· [iOS developer archive (unsigned)](https://github.com/agent-axiom/axiom-edge/releases/latest/download/axiom-edge-ios-unsigned.zip)
+
+The iOS archive requires Apple signing before installation. Android downloads
+are test APKs signed with a debug key. Windows, macOS and Linux apps are not
+currently built.
 
 ## Status
 
@@ -12,19 +19,21 @@ from Nothing A059P / Android 17 reports 2 of 3 checks passed; that phone run
 has not been independently reproduced. The new sustained benchmark still
 needs an on-device run.
 
-Local validation on 2026-11-10:
+Validation on 2026-11-13:
 
-- Flutter 3.38.6 / Dart 3.10.7: formatting and static analysis pass; 4 tests pass.
-- Rust 1.99.1: formatting, Clippy (`-D warnings`) and all 4 integration tests pass.
-- Platform bootstrap: 11 Python tests pass; both GitHub workflows pass actionlint.
+- Flutter 3.38.6 / Dart 3.10.7: formatting and static analysis pass; 26 tests pass.
+- Rust: formatting, Clippy (`-D warnings`) and all 4 integration tests pass.
+- Python tests cover platform bootstrap and release publication.
 - Android ARM64 release APK builds successfully (Android 9 / API 28 minimum);
   its APK v2 debug signature and ARM64-only native libraries were verified.
-- iOS compilation and on-device model inference remain unverified.
+- Unsigned iOS release compilation passes CI. Physical iOS inference remains
+  unverified.
 
 The Android project limits Gradle workers and compiles Kotlin in-process to
 reduce memory use. A 4 GB Linux host may still need swap for Dart AOT compilation.
 
-GitHub CI provides mobile integration builds and tagged APK releases.
+Successful main-branch CI automatically publishes a GitHub Release with direct
+downloads for all currently built platforms.
 Performance measurements have not been independently verified.
 
 ## v0.1 features
@@ -140,24 +149,25 @@ commits changes and pushes `main`. It refuses to overwrite an unrelated `origin`
 ## CI and version releases
 
 `.github/workflows/mobile.yml` runs on pushes to `main`, pull requests, manual
-runs, and tags `v*`:
+runs, and explicit version tags (`v*`, excluding generated build tags):
 
 - `android`: test/bootstrap Flutter project, verify formatting, analyze, test, build **ARM64 release APK**,
   upload workflow artifact retained 30 days.
-- `ios`: analyze/test and build unsigned iOS release (not an installable IPA).
-- `release`: only for `v*` tags and only after the Android job succeeds; downloads
-  that **same built APK**, computes `SHA256SUMS` and publishes both to GitHub Releases.
+- `ios`: analyze/test, build unsigned iOS release and archive it for developers
+  (not an installable IPA).
+- `rust`: call the reusable Rust checks in `.github/workflows/rust.yml`.
+- `release`: after **all three** succeed, publish the same run's APK, unsigned
+  iOS archive, checksums and source/build manifest. Publication runs on `main`
+  pushes/manual runs and explicit version tags; never on PRs.
 
-After **verifying a green Android CI** for `main`, publish the first version:
+No manual tagging is needed. Each successful main run gets an immutable build
+tag, for example `v0.1.2-build.12`. Stable download links above always point to
+the latest published release. Release notes contain direct links for every file
+and clearly distinguish installable APKs from unsigned iOS developer archives.
 
-```bash
-git tag v0.1.1
-git push origin v0.1.1
-```
-
-View APK build output in `Actions → Mobile CI → Artifacts` and tagged APKs in
-`Releases`. If repository policy disallows job-level write tokens, allow GitHub
-Actions to publish releases (`contents: write`) in repository settings.
+Publication first prepares a draft, verifies all uploaded files and only then
+makes the complete release public. Rerunning an already published build does
+not overwrite its files. See [release policy](docs/RELEASES.md).
 
 No signing credentials are required for Android test APKs. Flutter release APKs
 are test-signed by the default debug keystore unless a real signing configuration
@@ -173,8 +183,8 @@ code and build results before distributing builds.
 - Rust evaluator (currently independent, not linked into Flutter):
   `rust/axiom_edge_core`; run `cargo test --locked` there.
 - Android/iOS CI builds: `.github/workflows/mobile.yml`
-- Rust CI: `.github/workflows/rust.yml`
-- Bootstrap regression tests: `python3 -m unittest discover -s tool/tests -v`
+- Reusable/manual Rust CI: `.github/workflows/rust.yml`
+- Bootstrap and release regression tests: `python3 -m unittest discover -s tool/tests -v`
 - Architecture / roadmap: `docs/ARCHITECTURE.md`
 
 License: MIT for Axiom Edge sources. Third-party plugins, runtimes and model
