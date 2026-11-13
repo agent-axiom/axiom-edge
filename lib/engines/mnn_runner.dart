@@ -20,6 +20,31 @@ class MnnRunner implements ModelRunner {
   String? _secret;
 
   @override
+  Map<String, Object?> get configuration => {
+    'runtime_package': 'mnn_engine',
+    'runtime_package_version': '0.2.0',
+    'model_parameters': 'imported model configuration / plugin defaults',
+    'generation_defaults': {
+      'max_tokens': 128,
+      'temperature': 0.8,
+      'seed': null,
+      'reuse_prompt_prefix': null,
+      'sampling_parameters': 'imported model configuration',
+    },
+    'supported_controls': {'seed': false, 'reuse_prompt_prefix': false},
+    'temperature_control':
+        'requested via HTTP; the model-load sampler may '
+        'prevent request temperature=0 from ensuring greedy decoding',
+    'prompt_cache_policy': 'backend managed; not controlled by this adapter',
+    'ttft_definition':
+        'application elapsed time to first nonempty SSE text '
+        'delta; includes HTTP framing, scheduling and server buffering',
+    'throughput_definition':
+        'reported completion tokens / whole request '
+        'wall-clock time; not native decode throughput',
+  };
+
+  @override
   Future<void> load(LocalModel model) async {
     if (!Platform.isAndroid) {
       throw UnsupportedError('MNN currently supports Android only');
@@ -57,6 +82,8 @@ class MnnRunner implements ModelRunner {
     List<ChatTurn> history, {
     int maxTokens = 128,
     double temperature = 0.8,
+    int? seed,
+    bool reusePromptPrefix = true,
     TextDelta? onDelta,
   }) async {
     final endpoint = _url;
@@ -86,16 +113,24 @@ class MnnRunner implements ModelRunner {
     final buffer = StringBuffer();
     int? ttft;
     int? outputTokens;
+    var sawDone = false;
     await for (final line
         in response.stream
             .transform(utf8.decoder)
             .transform(const LineSplitter())) {
       if (!line.startsWith('data:')) continue;
       final raw = line.substring(5).trim();
-      if (raw == '[DONE]') break;
+      if (raw == '[DONE]') {
+        sawDone = true;
+        break;
+      }
       if (raw.isEmpty) continue;
       final event = jsonDecode(raw);
       if (event is! Map<String, dynamic>) continue;
+      final streamError = event['error'];
+      if (streamError != null) {
+        throw HttpException('MNN generation failed: $streamError');
+      }
       final usage = event['usage'];
       if (usage is Map<String, dynamic>) {
         outputTokens =
@@ -105,6 +140,9 @@ class MnnRunner implements ModelRunner {
       if (choices is! List || choices.isEmpty) continue;
       final choice = choices.first;
       if (choice is! Map) continue;
+      if (choice['finish_reason'] == 'cancelled') {
+        throw StateError('MNN generation was cancelled by the runtime');
+      }
       final delta = choice['delta'];
       final content = delta is Map ? delta['content'] : null;
       if (content is! String || content.isEmpty) continue;
@@ -113,16 +151,22 @@ class MnnRunner implements ModelRunner {
       onDelta?.call(content);
     }
     clock.stop();
-    // SSE elapsed time includes HTTP framing and scheduling. Do not call this
-    // rate equivalent to the native llama.cpp decode benchmark.
-    final decodeMs = ttft == null ? null : clock.elapsedMilliseconds - ttft;
+    if (!sawDone) {
+      throw const HttpException('MNN stream ended without a completion marker');
+    }
+    // The first delta can contain several tokens. Without its token count,
+    // subtracting TTFT but keeping all output tokens overstates throughput.
+    // This is an end-to-end SSE estimate, never native decode throughput.
     return GenerationResult(
       buffer.toString(),
       InferenceMetrics(
         totalMs: clock.elapsedMilliseconds,
         ttftMs: ttft,
         decodeTokens: outputTokens,
-        decodeTps: InferenceMetrics.rate(outputTokens, decodeMs),
+        decodeTps: InferenceMetrics.rate(
+          outputTokens,
+          clock.elapsedMilliseconds,
+        ),
         source: 'sse-wallclock',
       ),
     );

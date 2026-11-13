@@ -13,12 +13,21 @@ import 'package:share_plus/share_plus.dart';
 
 import '../engines/gguf_runner.dart';
 import '../engines/mnn_runner.dart';
+import 'benchmark.dart';
 import 'download.dart';
 import 'models.dart';
 import 'registry.dart';
+import 'reports.dart';
 import 'runner.dart';
 
 class LabState extends ChangeNotifier {
+  LabState({ModelRunner Function(ModelFormat)? runnerFactory})
+    : _runnerFactory = runnerFactory ?? _defaultRunner;
+
+  final ModelRunner Function(ModelFormat) _runnerFactory;
+  static ModelRunner _defaultRunner(ModelFormat format) =>
+      format == ModelFormat.gguf ? GgufRunner() : MnnRunner();
+
   final ModelRegistry registry = ModelRegistry();
   late final ModelDownloadService downloads = ModelDownloadService(registry);
 
@@ -28,6 +37,16 @@ class LabState extends ChangeNotifier {
   List<ChatTurn> chat = [];
   InferenceMetrics? lastMetrics;
   List<EvalResult> evals = [];
+  BenchmarkSession? benchmark;
+  List<BenchmarkSample> benchmarkSamples = [];
+  DateTime? evalStartedAt;
+  DateTime? evalFinishedAt;
+  int plannedEvalCases = 0;
+  String evalStatus = 'not_started';
+  Map<String, Object?> _evalConfiguration = {};
+  String? _evalError;
+  EvalCase? _interruptedEvalCase;
+  String _partialEvalResponse = '';
   String suiteName = 'pocket-smoke-v1';
   String status = 'Готов';
   String device = 'Неизвестное устройство';
@@ -191,9 +210,16 @@ class LabState extends ChangeNotifier {
     chat = [];
     evals = [];
     lastMetrics = null;
-    final runner = model.format == ModelFormat.gguf
-        ? GgufRunner()
-        : MnnRunner();
+    benchmark = null;
+    benchmarkSamples = [];
+    evalStartedAt = null;
+    evalFinishedAt = null;
+    plannedEvalCases = 0;
+    evalStatus = 'not_started';
+    _evalError = null;
+    _interruptedEvalCase = null;
+    _partialEvalResponse = '';
+    final runner = _runnerFactory(model.format);
     try {
       await runner.load(model);
       _runner = runner;
@@ -240,38 +266,104 @@ class LabState extends ChangeNotifier {
     final runner = _runner;
     if (runner == null) throw StateError('Сначала загрузи модель');
     evals = [];
+    evalStartedAt = DateTime.now().toUtc();
+    evalFinishedAt = null;
+    evalStatus = 'running';
+    plannedEvalCases = 0;
+    _evalError = null;
+    _interruptedEvalCase = null;
+    _partialEvalResponse = '';
+    _evalConfiguration = Map.of(runner.configuration);
     generating = true;
-    final jsonText = await rootBundle.loadString('assets/evals/smoke.json');
-    final spec = jsonDecode(jsonText) as Map<String, dynamic>;
-    suiteName = spec['suite'] as String;
-    final cases = (spec['cases'] as List)
-        .map((x) => EvalCase.fromJson(Map<String, dynamic>.from(x as Map)))
-        .toList();
     try {
+      final jsonText = await rootBundle.loadString('assets/evals/smoke.json');
+      final spec = jsonDecode(jsonText) as Map<String, dynamic>;
+      suiteName = spec['suite'] as String;
+      final cases = (spec['cases'] as List)
+          .map((x) => EvalCase.fromJson(Map<String, dynamic>.from(x as Map)))
+          .toList();
+      plannedEvalCases = cases.length;
       for (var i = 0; i < cases.length; i++) {
         if (_cancelRequested) break;
         final test = cases[i];
+        _interruptedEvalCase = test;
+        _partialEvalResponse = '';
         progress = i / cases.length;
         status = 'Проверка ${i + 1}/${cases.length}: ${test.id}';
         notifyListeners();
+        if (_cancelRequested) break;
         final response = await runner.generate(
           [ChatTurn('user', test.prompt)],
           maxTokens: 96,
-          temperature: 0.1,
+          temperature: 0,
+          seed: 42,
+          reusePromptPrefix: false,
+          onDelta: (delta) => _partialEvalResponse += delta,
         );
+        if (_cancelRequested) break;
         evals.add(
           EvalResult(
-            caseId: test.id,
+            test: test,
             passed: evaluate(test, response.text),
             response: response.text,
             metrics: response.metrics,
+            generation: smokeGeneration,
           ),
         );
         lastMetrics = response.metrics;
+        _interruptedEvalCase = null;
+        _partialEvalResponse = '';
         notifyListeners();
       }
-      progress = 1;
+      evalStatus = _cancelRequested ? 'cancelled' : 'completed';
+      progress = cases.isEmpty ? 1 : evals.length / cases.length;
       status = _cancelRequested ? 'Проверки остановлены' : 'Проверки завершены';
+    } catch (e) {
+      _evalError = e.toString();
+      evalStatus = _cancelRequested ? 'cancelled' : 'error';
+      if (_cancelRequested) {
+        status = 'Проверки остановлены';
+      } else {
+        rethrow;
+      }
+    } finally {
+      evalFinishedAt = DateTime.now().toUtc();
+      generating = false;
+    }
+  });
+
+  Future<void> runBenchmark() => _guarded(() async {
+    final runner = _runner;
+    if (runner == null) throw StateError('Сначала загрузи модель');
+    benchmark = null;
+    benchmarkSamples = [];
+    generating = true;
+    try {
+      benchmark = await BenchmarkService(runner).run(
+        isCancelled: () => _cancelRequested,
+        onProgress: (phase, index, total) {
+          status = '${phase == 'warmup' ? 'Прогрев' : 'Замер'} $index/$total';
+          notifyListeners();
+        },
+        onSample: (sample, completed, total) {
+          benchmarkSamples.add(sample);
+          progress = completed / total;
+          lastMetrics = sample.metrics ?? lastMetrics;
+          notifyListeners();
+        },
+      );
+      final session = benchmark!;
+      status = session.cancelled
+          ? 'Замер остановлен'
+          : session.complete
+          ? 'Замер завершён'
+          : 'Замер прерван из-за ошибки';
+      if (!session.complete && !session.cancelled) {
+        error = session.samples
+            .where((sample) => sample.error != null)
+            .map((sample) => sample.error)
+            .firstOrNull;
+      }
     } finally {
       generating = false;
     }
@@ -284,23 +376,31 @@ class LabState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> exportResults({Rect? sharePositionOrigin}) async {
+  Future<void> exportResults({
+    Rect? sharePositionOrigin,
+    bool performance = false,
+  }) async {
     final model = active;
-    if (model == null || evals.isEmpty) return;
-    final payload = {
-      'schema_version': '1.0',
-      'app_version': '0.1.1',
-      'date': DateTime.now().toUtc().toIso8601String(),
-      'device': device,
-      'model': model.toJson(),
-      'engine': model.format == ModelFormat.gguf ? 'llama.cpp' : 'MNN',
-      'suite': suiteName,
-      'summary': {
-        'passed': evals.where((x) => x.passed).length,
-        'total': evals.length,
-      },
-      'cases': evals.map((x) => x.toJson()).toList(),
-    };
+    if (model == null || busy) return;
+    final session = benchmark;
+    if (performance && session == null) return;
+    if (!performance && evalStartedAt == null) return;
+    final payload = performance
+        ? buildBenchmarkReport(model: model, device: device, session: session!)
+        : buildEvaluationReport(
+            model: model,
+            device: device,
+            suite: suiteName,
+            results: evals,
+            plannedCases: plannedEvalCases,
+            status: evalStatus,
+            startedAt: evalStartedAt!,
+            finishedAt: evalFinishedAt,
+            runnerConfiguration: _evalConfiguration,
+            error: _evalError,
+            interruptedCase: _interruptedEvalCase,
+            partialResponse: _partialEvalResponse,
+          );
     final temp = await getTemporaryDirectory();
     final file = File(
       p.join(

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 
+import '../core/benchmark.dart';
 import '../core/lab_state.dart';
 import '../core/models.dart';
 
@@ -343,7 +344,7 @@ class _ChatPageState extends State<ChatPage> {
           Padding(
             padding: const EdgeInsets.all(12),
             child: Text(
-              'TTFT ${s.lastMetrics!.ttftMs ?? '—'} мс  •  decode ${s.lastMetrics!.decodeTps?.toStringAsFixed(1) ?? '—'} ток/с  •  ${s.lastMetrics!.totalMs} мс',
+              'Первый текст: ${s.lastMetrics!.ttftMs ?? '—'} мс  •  ${s.lastMetrics!.source == 'sse-wallclock' ? 'SSE, всё время' : 'Генерация'}: ${s.lastMetrics!.decodeTps?.toStringAsFixed(1) ?? '—'} ток/с  •  Всего: ${s.lastMetrics!.totalMs} мс',
               style: const TextStyle(fontSize: 12, color: Color(0xFF33D6A6)),
             ),
           ),
@@ -409,13 +410,98 @@ class EvalPage extends StatelessWidget {
   const EvalPage(this.state, {super.key});
   final LabState state;
 
-  String _metric(double? v) => v == null ? '—' : v.toStringAsFixed(1);
-
   @override
   Widget build(BuildContext context) {
+    final session = state.benchmark;
+    final samples = state.benchmarkSamples.isNotEmpty
+        ? state.benchmarkSamples
+        : session?.samples ?? const <BenchmarkSample>[];
+    const config = BenchmarkConfig();
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        const Text(
+          'Замер скорости',
+          style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${config.warmupRuns} прогрева + ${config.measuredRuns} повторов. '
+          'Лимит ответа — ${config.maxTokens} токенов. '
+          'В сводку скорости входят ответы от ${config.minDecodeTokens} токенов.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Модель остаётся загруженной. Прогрев не входит в сводку. '
+          'Первый текст — время до первого фрагмента в приложении; '
+          'он может содержать несколько токенов.',
+          style: TextStyle(fontSize: 12, color: Colors.white60),
+        ),
+        if (state.active?.format == ModelFormat.mnn) ...[
+          const SizedBox(height: 8),
+          const Text(
+            'MNN: скорость учитывает всё время запроса. Это оценка по SSE, '
+            'её нельзя напрямую сравнивать с нативной скоростью llama.cpp. '
+            'Seed и повторное использование префикса здесь не управляются.',
+            style: TextStyle(fontSize: 12, color: Colors.amberAccent),
+          ),
+        ],
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.icon(
+              onPressed: state.isReady && !state.busy
+                  ? state.runBenchmark
+                  : null,
+              icon: const Icon(Icons.speed),
+              label: const Text('Начать замер'),
+            ),
+            _ExportButton(
+              state: state,
+              performance: true,
+              enabled: session != null && !state.busy,
+              label: 'JSON замера',
+            ),
+          ],
+        ),
+        if (session != null) ...[
+          const SizedBox(height: 14),
+          Text(
+            session.cancelled
+                ? 'Замер остановлен: результаты неполные.'
+                : session.complete
+                ? 'Замер завершён.'
+                : 'Замер прерван: результаты неполные.',
+            style: TextStyle(
+              color: session.complete
+                  ? const Color(0xFF33D6A6)
+                  : Colors.orangeAccent,
+            ),
+          ),
+          Text(
+            'Выполнено ${session.samples.length} из ${session.config.totalRuns} запусков, включая прогрев.',
+            style: const TextStyle(color: Colors.white60, fontSize: 12),
+          ),
+          for (final group in session.summaryBySource.entries)
+            _BenchmarkSummary(source: group.key, values: group.value),
+          const SizedBox(height: 6),
+          const Text(
+            'Задержки включают все завершённые повторы, в том числе короткие. '
+            'При пяти значениях p90 совпадает с максимумом.',
+            style: TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+        ],
+        if (samples.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          const Text('Отдельные запуски'),
+          for (final sample in samples) _BenchmarkSampleCard(sample),
+        ],
+        const SizedBox(height: 28),
+        const Divider(),
+        const SizedBox(height: 16),
         const Text(
           'Контрольные задания',
           style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold),
@@ -427,83 +513,244 @@ class EvalPage extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         const Text(
-          'Каждая проверка выполняется независимо. Условия и ограничения генерации одинаковые; скорость зависит от прогрева, кэша и состояния устройства.',
+          'Каждая проверка выполняется независимо. Открой результат, '
+          'чтобы увидеть запрос и ожидаемый ответ. Короткие задания '
+          'проверяют ответы модели; для скорости используй замер выше.',
           style: TextStyle(fontSize: 12, color: Colors.white60),
         ),
         const SizedBox(height: 14),
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
             FilledButton.icon(
               onPressed: state.isReady && !state.busy ? state.runSmoke : null,
               icon: const Icon(Icons.play_arrow),
-              label: const Text('Запустить'),
+              label: const Text('Проверить ответы'),
             ),
-            const SizedBox(width: 8),
-            Builder(
-              builder: (buttonContext) => OutlinedButton.icon(
-                onPressed: state.evals.isNotEmpty && !state.busy
-                    ? () async {
-                        final box =
-                            buttonContext.findRenderObject()! as RenderBox;
-                        await state.exportResults(
-                          sharePositionOrigin:
-                              box.localToGlobal(Offset.zero) & box.size,
-                        );
-                      }
-                    : null,
-                icon: const Icon(Icons.ios_share),
-                label: const Text('JSON'),
-              ),
+            _ExportButton(
+              state: state,
+              performance: false,
+              enabled: state.evalStartedAt != null && !state.busy,
+              label: 'JSON проверок',
             ),
           ],
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
+        if (state.evalStatus == 'cancelled')
+          const Text(
+            'Проверки остановлены: результаты неполные.',
+            style: TextStyle(color: Colors.orangeAccent),
+          )
+        else if (state.evalStatus == 'error')
+          const Text(
+            'Проверки прерваны из-за ошибки. Подробности сохранены в JSON.',
+            style: TextStyle(color: Colors.orangeAccent),
+          ),
         if (state.evals.isEmpty)
           const Text(
-            'Результатов пока нет',
+            'Результатов проверок пока нет',
             style: TextStyle(color: Colors.white60),
           ),
-        for (final e in state.evals)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        e.passed ? Icons.check_circle : Icons.cancel,
-                        color: e.passed
-                            ? const Color(0xFF33D6A6)
-                            : Colors.orangeAccent,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          e.caseId,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 7),
-                  Text(
-                    'TTFT: ${e.metrics.ttftMs ?? '—'} мс  ·  Decode: ${_metric(e.metrics.decodeTps)} ток/с  ·  Total: ${e.metrics.totalMs} мс',
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Метод: ${e.metrics.source}',
-                    style: const TextStyle(color: Colors.white54, fontSize: 11),
-                  ),
-                  const SizedBox(height: 8),
-                  SelectableText(e.response, maxLines: 8),
-                ],
-              ),
-            ),
-          ),
+        for (final result in state.evals) _EvaluationCard(result),
       ],
+    );
+  }
+}
+
+class _ExportButton extends StatelessWidget {
+  const _ExportButton({
+    required this.state,
+    required this.performance,
+    required this.enabled,
+    required this.label,
+  });
+  final LabState state;
+  final bool performance;
+  final bool enabled;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: enabled
+          ? () async {
+              final box = context.findRenderObject()! as RenderBox;
+              await state.exportResults(
+                performance: performance,
+                sharePositionOrigin: box.localToGlobal(Offset.zero) & box.size,
+              );
+            }
+          : null,
+      icon: const Icon(Icons.ios_share),
+      label: Text(label),
+    );
+  }
+}
+
+String _metric(Object? value) =>
+    value is num && value.isFinite ? value.toStringAsFixed(1) : '—';
+
+class _BenchmarkSummary extends StatelessWidget {
+  const _BenchmarkSummary({required this.source, required this.values});
+  final String source;
+  final Map<String, Object?> values;
+
+  Map<String, Object?> _stats(String metric) =>
+      values[metric] as Map<String, Object?>;
+
+  Widget _metricLine(String label, String metric, String unit) {
+    final stats = _stats(metric);
+    return Padding(
+      padding: const EdgeInsets.only(top: 7),
+      child: Text(
+        '$label: медиана ${_metric(stats['median'])} $unit · '
+        'p90 ${_metric(stats['p90'])} $unit · n=${stats['count']}',
+        style: const TextStyle(fontSize: 12),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final speed = _stats('decode_tokens_per_s');
+    final hasSpeed = (speed['count'] as int) > 0;
+    final estimated = source == 'sse-wallclock';
+    return Card(
+      key: Key('benchmark-summary-$source'),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(source, style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 7),
+            Text(
+              'Завершено: ${values['completed_count']} · '
+              'коротких: ${values['short_output_count']} · '
+              'без числа токенов: ${values['unknown_decode_tokens_count']} · '
+              'отменено: ${values['cancelled_count']} · '
+              'ошибок: ${values['error_count']}',
+              style: const TextStyle(fontSize: 12, color: Colors.white70),
+            ),
+            if (hasSpeed)
+              KeyedSubtree(
+                key: Key('aggregate-decode-$source'),
+                child: _metricLine(
+                  estimated ? 'Скорость по всему времени запроса' : 'Генерация',
+                  'decode_tokens_per_s',
+                  'ток/с',
+                ),
+              )
+            else
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Скорость не рассчитана: нет подходящих длинных ответов с метриками.',
+                  style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                ),
+              ),
+            if (estimated)
+              const Padding(
+                padding: EdgeInsets.only(top: 7),
+                child: Text(
+                  'Оценка по SSE, включая обработку запроса; это не нативная скорость декодирования.',
+                  style: TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+              ),
+            _metricLine('Первый текст в приложении', 'ttft_ms', 'мс'),
+            _metricLine('Полное время ответа', 'total_ms', 'мс'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BenchmarkSampleCard extends StatelessWidget {
+  const _BenchmarkSampleCard(this.sample);
+  final BenchmarkSample sample;
+
+  @override
+  Widget build(BuildContext context) {
+    final metrics = sample.metrics;
+    final status = switch (sample.status) {
+      'completed' => 'завершён',
+      'cancelled' => 'отменён',
+      _ => 'ошибка',
+    };
+    return Card(
+      child: ExpansionTile(
+        title: Text(
+          '${sample.phase == 'warmup' ? 'Прогрев' : 'Замер'} ${sample.index} · $status',
+        ),
+        subtitle: Text(
+          'Токенов: ${metrics?.decodeTokens ?? '—'} · '
+          'время: ${metrics?.totalMs ?? '—'} мс',
+          style: const TextStyle(fontSize: 12),
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (sample.error != null)
+            SelectableText(
+              sample.error!,
+              style: const TextStyle(color: Colors.orangeAccent),
+            ),
+          Text('Метод: ${metrics?.source ?? 'нет метрик'}'),
+          Text('Первый текст: ${metrics?.ttftMs ?? '—'} мс'),
+          Text(
+            '${metrics?.source == 'sse-wallclock' ? 'SSE по всему времени запроса' : 'Генерация'}: '
+            '${_metric(metrics?.decodeTps)} ток/с',
+          ),
+          const SizedBox(height: 8),
+          SelectableText('Запрос: ${sample.prompt}'),
+          const SizedBox(height: 8),
+          SelectableText(
+            'Ответ: ${sample.response.isEmpty ? '—' : sample.response}',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EvaluationCard extends StatelessWidget {
+  const _EvaluationCard(this.result);
+  final EvalResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ExpansionTile(
+        key: Key('eval-${result.caseId}'),
+        leading: Icon(
+          result.passed ? Icons.check_circle : Icons.cancel,
+          color: result.passed ? const Color(0xFF33D6A6) : Colors.orangeAccent,
+        ),
+        title: Text(result.caseId),
+        subtitle: Text(result.passed ? 'Пройдена' : 'Не пройдена'),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SelectableText('Запрос: ${result.test.prompt}'),
+          const SizedBox(height: 8),
+          Text('Условие: ${result.test.kind}'),
+          Text('Ожидается: ${result.test.expected ?? 'JSON-объект'}'),
+          const SizedBox(height: 8),
+          SelectableText('Ответ: ${result.response}'),
+          const SizedBox(height: 8),
+          Text(
+            'Первый текст в приложении: ${result.metrics.ttftMs ?? '—'} мс · '
+            'полное время: ${result.metrics.totalMs} мс',
+            style: const TextStyle(fontSize: 12, color: Colors.white70),
+          ),
+          Text(
+            'Метод: ${result.metrics.source}',
+            style: const TextStyle(fontSize: 12, color: Colors.white54),
+          ),
+        ],
+      ),
     );
   }
 }
