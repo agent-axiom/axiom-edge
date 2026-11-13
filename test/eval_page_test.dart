@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 BenchmarkSession sessionWith({int tokens = 1, bool cancelled = false}) {
   final start = DateTime.utc(2026, 11, 13);
-  const config = BenchmarkConfig();
+  final config = BenchmarkConfig(warmupRuns: cancelled ? 0 : 2);
   return BenchmarkSession(
     config: config,
     startedAt: start,
@@ -17,12 +17,8 @@ BenchmarkSession sessionWith({int tokens = 1, bool cancelled = false}) {
     samples: [
       for (var i = 0; i < (cancelled ? 1 : config.totalRuns); i++)
         BenchmarkSample(
-          phase: cancelled || i >= config.warmupRuns ? 'measured' : 'warmup',
-          index: cancelled
-              ? 1
-              : i < config.warmupRuns
-              ? i + 1
-              : i - 1,
+          phase: i >= config.warmupRuns ? 'measured' : 'warmup',
+          index: i < config.warmupRuns ? i + 1 : i - config.warmupRuns + 1,
           startedAt: start,
           status: cancelled ? 'cancelled' : 'completed',
           prompt: config.prompt,
@@ -88,10 +84,15 @@ void main() {
     await tester.scrollUntilVisible(
       find.byKey(const Key('eval-literal-answer')),
       250,
+      scrollable: find.byType(Scrollable).first,
     );
     await tester.tap(find.byKey(const Key('eval-literal-answer')));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Ожидается: 4'), 150);
+    await tester.scrollUntilVisible(
+      find.text('Ожидается: 4'),
+      150,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Ожидается: 4'), findsOneWidget);
     expect(find.text('Ответ: 1'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -105,7 +106,11 @@ void main() {
     final message = find.text(
       'Скорость не рассчитана: нет подходящих длинных ответов с метриками.',
     );
-    await tester.scrollUntilVisible(message, 150);
+    await tester.scrollUntilVisible(
+      message,
+      150,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(message, findsOneWidget);
     expect(
       find.byKey(const Key('aggregate-decode-native-llama-perf')),
@@ -121,7 +126,11 @@ void main() {
         ..benchmark = sessionWith(tokens: 256, cancelled: true);
       await mountPage(tester, state);
       final message = find.text('Замер остановлен: результаты неполные.');
-      await tester.scrollUntilVisible(message, 150);
+      await tester.scrollUntilVisible(
+        message,
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(message, findsOneWidget);
       expect(
         find.byKey(const Key('aggregate-decode-native-llama-perf')),
