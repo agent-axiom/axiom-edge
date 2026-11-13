@@ -90,7 +90,7 @@ On the phone:
 1. Open **Models**, select **Download** for Pocket GGUF; or **Import GGUF**.
 2. Tap the stored model to load it.
 3. Open **Chat** for streaming responses.
-4. Open **Checks**, tap **Измерить скорость** for the warm benchmark,
+4. Open **Checks**, tap **Начать замер** for the warm benchmark,
    or **Проверить ответы** for the separate `pocket-smoke-v1` suite.
 5. Export each result using its own JSON button through the share sheet.
 
