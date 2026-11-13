@@ -194,7 +194,11 @@ class GitHubCLI:
     def _run(arguments: list[str], allow_missing: bool = False) -> str | None:
         result = subprocess.run(["gh", *arguments], text=True, capture_output=True, check=False)
         if result.returncode:
-            if allow_missing and re.search(r"\bHTTP 404\b", result.stderr):
+            native_missing = (
+                arguments[:2] == ["release", "view"]
+                and result.stderr.strip() == "release not found"
+            )
+            if allow_missing and (re.search(r"\bHTTP 404\b", result.stderr) or native_missing):
                 return None
             # CLI arguments contain only repository/ref/file metadata, not tokens.
             status = re.search(r"\bHTTP (\d{3})\b", result.stderr)
@@ -206,6 +210,23 @@ class GitHubCLI:
 
     def command(self, *arguments: str) -> str:
         return self._run(list(arguments)) or ""
+
+    def release_view(self, repository: str, tag: str) -> dict[str, Any] | None:
+        # Native gh fetches pending draft tags through GraphQL, then fetches
+        # the numeric REST release. A REST listing can omit a fresh draft.
+        output = self._run(
+            [
+                "release", "view", tag, "--repo", repository,
+                "--json", "databaseId,isDraft,tagName",
+            ],
+            allow_missing=True,
+        )
+        if output is None:
+            return None
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError as error:
+            raise ReleaseError("GitHub release view returned invalid JSON") from error
 
     def request(
         self,
@@ -333,8 +354,34 @@ def _release_by_tag(cli: GitHubCLI, manifest: dict[str, Any]) -> dict[str, Any] 
                 if len(matches) > 1:
                     raise ReleaseError("multiple releases use the requested tag; refusing to choose")
         if len(releases) < 100:
-            return matches[0] if matches else None
+            if matches:
+                return matches[0]
+            return _native_release_by_tag(cli, manifest)
     raise ReleaseError("release listing exceeds the supported pagination limit")
+
+
+def _native_release_by_tag(cli: GitHubCLI, manifest: dict[str, Any]) -> dict[str, Any] | None:
+    view = cli.release_view(manifest["repository"], manifest["tag"])
+    if view is None:
+        return None
+    if (
+        not isinstance(view, dict)
+        or type(view.get("databaseId")) is not int
+        or view["databaseId"] <= 0
+        or type(view.get("isDraft")) is not bool
+        or view.get("tagName") != manifest["tag"]
+    ):
+        # A GraphQL node ID (`id`) is not the REST numeric `databaseId`.
+        raise ReleaseError("GitHub release view has invalid databaseId/isDraft/tagName metadata")
+    release = cli.request(f"repos/{manifest['repository']}/releases/{view['databaseId']}")
+    if (
+        not isinstance(release, dict)
+        or release.get("id") != view["databaseId"]
+        or release.get("tag_name") != manifest["tag"]
+        or release.get("draft") is not view["isDraft"]
+    ):
+        raise ReleaseError("GitHub numeric release does not match the native release view")
+    return release
 
 
 def _published_assets(release: dict[str, Any]) -> None:
@@ -417,9 +464,19 @@ def publish(directory: Path, cli: GitHubCLI | None = None) -> str:
             "release", "create", tag, "--repo", repository, "--verify-tag", "--draft",
             "--title", manifest["title"], "--notes-file", str(directory / "release-notes.md"),
         )
-        release = _release_by_tag(cli, manifest)
+        # Wait for the acknowledged draft without issuing another create.
+        for attempt in range(3):
+            release = _release_by_tag(cli, manifest)
+            if release is not None:
+                break
+            if attempt < 2:
+                time.sleep(2)
+        if release is None:
+            raise ReleaseError("created draft remains unavailable after three lookups; not creating another draft")
     if not isinstance(release, dict) or release.get("draft") is not True or not isinstance(release.get("id"), int):
-        raise ReleaseError("GitHub did not create an unpublished draft release")
+        draft_type = type(release.get("draft")).__name__ if isinstance(release, dict) else "missing"
+        id_type = type(release.get("id")).__name__ if isinstance(release, dict) else "missing"
+        raise ReleaseError(f"invalid draft metadata (draft type={draft_type}, id type={id_type})")
     cli.command(
         "release", "upload", tag,
         *(str(_file(directory, name)) for name in UPLOAD_NAMES),
