@@ -1,5 +1,5 @@
 {
-  "suite": "pocket-smoke-v1",
+  "suite": "pocket-smoke-v2",
   "cases": [
     {
       "id": "literal-answer",
@@ -9,7 +9,7 @@
     {
       "id": "structured-json",
       "prompt": "Return a JSON object only, with the key success set to true. No Markdown.",
-      "assertion": {"kind": "json_valid"}
+      "assertion": {"kind": "json_success_true"}
     },
     {
       "id": "instruction-following",

@@ -4,6 +4,7 @@
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -12,6 +13,7 @@ pub enum AssertionKind {
     Contains,
     Regex,
     JsonValid,
+    JsonSuccessTrue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,10 +73,13 @@ pub fn check(assertion: &Assertion, output: &str) -> Result<bool, EvalError> {
             let regex = Regex::new(expected).map_err(|e| EvalError::InvalidRegex(e.to_string()))?;
             Ok(regex.is_match(trimmed))
         }
-        AssertionKind::JsonValid => Ok(matches!(
-            serde_json::from_str::<serde_json::Value>(trimmed),
-            Ok(serde_json::Value::Object(_))
-        )),
+        AssertionKind::JsonValid | AssertionKind::JsonSuccessTrue => {
+            let Ok(Value::Object(object)) = serde_json::from_str(trimmed) else {
+                return Ok(false);
+            };
+            Ok(assertion.kind == AssertionKind::JsonValid
+                || object.get("success") == Some(&Value::Bool(true)))
+        }
     }
 }
 

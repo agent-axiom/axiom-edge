@@ -14,16 +14,16 @@ currently built.
 
 ## Status
 
-**v0.1.2 development prototype.** A user-supplied v0.1.1 GGUF smoke export
-from Nothing A059P / Android 17 reports 2 of 3 checks passed; that phone run
-has not been independently reproduced. The new sustained benchmark still
-needs an on-device run.
+**v0.1.2 prototype.** User-supplied GGUF exports from Nothing A059P / Android 17
+cover correctness checks and a warm generation benchmark. Those phone runs
+have not been independently reproduced. The strict `pocket-smoke-v2` suite
+requires a top-level boolean `success: true` for its JSON probe.
 
-Validation on 2026-11-13:
+Validation on 2026-11-14:
 
-- Flutter 3.38.6 / Dart 3.10.7: formatting and static analysis pass; 26 tests pass.
-- Rust: formatting, Clippy (`-D warnings`) and all 4 integration tests pass.
-- Python tests cover platform bootstrap and release publication.
+- Flutter 3.38.6 / Dart 3.10.7: formatting and static analysis pass; 27 tests pass.
+- Rust: formatting, Clippy (`-D warnings`) and all 5 integration tests pass.
+- All 46 Python tests for platform bootstrap and release publication pass.
 - Android ARM64 release APK builds successfully (Android 9 / API 28 minimum);
   its APK v2 debug signature and ARM64-only native libraries were verified.
 - Unsigned iOS release compilation passes CI. Physical iOS inference remains
@@ -46,7 +46,7 @@ Performance measurements have not been independently verified.
 | MNN INT4 (~173 MB) direct HF download/import | Experimental, may fail | Not available |
 | Import complete MNN directory via system folder picker | Yes | Not available |
 | Streaming local chat | Yes | Yes, GGUF |
-| Deterministic smoke evals (exact, JSON, contains) | Yes | Yes |
+| Smoke checks (exact, JSON `success: true`, contains) | Yes | Yes |
 | TTFT + native/sampled throughput + JSON export | Yes | Yes |
 | Warm benchmark: 2 warmups + 5 repeated long generations | Yes | Yes, GGUF |
 | Median/p90 and replay inputs in JSON schema 2.0 | Yes | Yes |
@@ -100,7 +100,7 @@ On the phone:
 2. Tap the stored model to load it.
 3. Open **Chat** for streaming responses.
 4. Open **Checks**, tap **Начать замер** for the warm benchmark,
-   or **Проверить ответы** for the separate `pocket-smoke-v1` suite.
+   or **Проверить ответы** for the separate `pocket-smoke-v2` suite.
 5. Export each result using its own JSON button through the share sheet.
 
 On Android, MNN can also import a **directory** through SAF; importing a

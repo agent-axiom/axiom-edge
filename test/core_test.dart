@@ -18,6 +18,30 @@ void main() {
     expect(evaluate(testCase, '```json\n{}\n```'), isFalse);
   });
 
+  test('structured JSON requires a top-level boolean success set to true', () {
+    const testCase = EvalCase(
+      id: 'json',
+      prompt: 'p',
+      kind: 'json_success_true',
+    );
+    expect(evaluate(testCase, '{"success":true}'), isTrue);
+    expect(evaluate(testCase, ' { "extra": 0, "success": true }\n'), isTrue);
+    for (final response in [
+      '{"success":false}',
+      '{"success":"true"}',
+      '{"success":1}',
+      '{"success":null}',
+      '{}',
+      '{"nested":{"success":true}}',
+      '[{"success":true}]',
+      'true',
+      '{"success":true',
+      '```json\n{"success":true}\n```',
+    ]) {
+      expect(evaluate(testCase, response), isFalse, reason: response);
+    }
+  });
+
   test('exact and contains are deterministic', () {
     const exact = EvalCase(id: 'e', prompt: 'p', kind: 'exact', expected: '4');
     const contains = EvalCase(

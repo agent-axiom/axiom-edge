@@ -165,9 +165,11 @@ bool evaluate(EvalCase test, String output) {
       }
       return RegExp(expression).hasMatch(candidate);
     case 'json_valid':
+    case 'json_success_true':
       try {
         final data = jsonDecode(candidate);
-        return data is Map<String, dynamic>;
+        return data is Map<String, dynamic> &&
+            (test.kind == 'json_valid' || data['success'] == true);
       } on FormatException {
         return false;
       }

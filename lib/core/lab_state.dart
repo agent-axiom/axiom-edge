@@ -47,7 +47,7 @@ class LabState extends ChangeNotifier {
   String? _evalError;
   EvalCase? _interruptedEvalCase;
   String _partialEvalResponse = '';
-  String suiteName = 'pocket-smoke-v1';
+  String suiteName = 'pocket-smoke-v2';
   String status = 'Готов';
   String device = 'Неизвестное устройство';
   String? error;
@@ -294,10 +294,10 @@ class LabState extends ChangeNotifier {
         if (_cancelRequested) break;
         final response = await runner.generate(
           [ChatTurn('user', test.prompt)],
-          maxTokens: 96,
-          temperature: 0,
-          seed: 42,
-          reusePromptPrefix: false,
+          maxTokens: smokeGeneration['max_tokens'] as int,
+          temperature: smokeGeneration['temperature'] as double,
+          seed: smokeGeneration['seed'] as int,
+          reusePromptPrefix: smokeGeneration['reuse_prompt_prefix'] as bool,
           onDelta: (delta) => _partialEvalResponse += delta,
         );
         if (_cancelRequested) break;

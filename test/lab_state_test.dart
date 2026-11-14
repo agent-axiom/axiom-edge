@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:axiom_edge/core/benchmark.dart';
 import 'package:axiom_edge/core/lab_state.dart';
 import 'package:axiom_edge/core/models.dart';
+import 'package:axiom_edge/core/reports.dart';
 import 'package:axiom_edge/core/runner.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -207,28 +209,46 @@ void main() {
       expect(state.generating, isFalse);
       expect(state.error, isNull);
       expect(state.evalStatus, 'completed');
-      expect(state.suiteName, 'pocket-smoke-v1');
+      expect(state.suiteName, 'pocket-smoke-v2');
       expect(state.plannedEvalCases, 3);
       expect(state.evals, hasLength(3));
       expect(state.evals.every((result) => result.passed), isTrue);
       expect(state.evalStartedAt, isNotNull);
       expect(state.evalFinishedAt, isNotNull);
-      final literal = state.evals.first.toJson();
+      final report = buildEvaluationReport(
+        model: _model,
+        device: state.device,
+        suite: state.suiteName,
+        results: state.evals,
+        plannedCases: state.plannedEvalCases,
+        status: state.evalStatus,
+        startedAt: state.evalStartedAt!,
+        finishedAt: state.evalFinishedAt,
+        runnerConfiguration: runner.configuration,
+      );
+      final exported = jsonDecode(jsonEncode(report)) as Map<String, dynamic>;
+      final cases = (exported['cases'] as List).cast<Map<String, dynamic>>();
+      expect(cases, hasLength(responses.length));
+      expect(runner.calls, hasLength(cases.length));
+      final literal = cases.first;
       expect(literal['case_id'], 'literal-answer');
       expect(literal['prompt'], 'Answer with one digit only: what is 2 + 2?');
       expect(literal['assertion'], {'kind': 'exact', 'value': '4'});
-      expect(literal['response'], '4');
-      expect(literal['generation'], {
+      const expectedGeneration = {
         'max_tokens': 96,
         'temperature': 0.0,
         'seed': 42,
         'reuse_prompt_prefix': false,
-      });
-      for (final call in runner.calls) {
-        expect(call['max_tokens'], 96);
-        expect(call['temperature'], 0);
-        expect(call['seed'], 42);
-        expect(call['reuse_prompt_prefix'], isFalse);
+      };
+      for (final (index, item) in cases.indexed) {
+        expect(item['response'], responses[index]);
+        expect(item['generation'], expectedGeneration);
+        expect(runner.calls[index], {
+          'messages': [
+            {'role': 'user', 'content': item['prompt']},
+          ],
+          ...expectedGeneration,
+        });
       }
     },
   );

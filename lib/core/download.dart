@@ -98,7 +98,7 @@ class ModelDownloadService {
       ..connectionTimeout = const Duration(seconds: 30);
     try {
       final request = await client.getUrl(url);
-      request.headers.set(HttpHeaders.userAgentHeader, 'axiom-edge/0.1.1');
+      request.headers.set(HttpHeaders.userAgentHeader, 'axiom-edge/0.1.2');
       final response = await request.close();
       if (response.statusCode != HttpStatus.ok) {
         throw HttpException(

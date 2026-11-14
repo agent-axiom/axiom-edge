@@ -44,10 +44,15 @@ finish with zero sufficiently long outputs, in which case no speed is reported.
 
 ## Correctness
 
-Each `pocket-smoke-v1` probe uses a fresh conversation, 96-token limit,
+Each `pocket-smoke-v2` probe uses a fresh conversation, 96-token limit,
 temperature 0, seed 42 and no prompt-prefix reuse where supported. Reports
 preserve prompts, assertions, expected values, responses and requested settings.
-The JSON probe checks for a valid object, not a schema or the `success` value.
+The JSON probe uses `json_success_true`: a top-level object must contain
+`success` with the JSON boolean value `true`. Additional fields are allowed.
+Missing, false, null, numeric, string and nested-only values fail, as do arrays,
+malformed JSON and Markdown wrappers. The legacy `json_valid` rule remains
+available for historical suites; its weaker object-only condition is not used
+by `pocket-smoke-v2`.
 Cancelled generations are not scored; backend errors retain the interrupted
 case, error text and partial response. Completed and planned counts are separate.
 

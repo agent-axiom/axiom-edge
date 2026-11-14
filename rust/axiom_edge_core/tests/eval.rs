@@ -4,6 +4,13 @@ use axiom_edge_core::{Assertion, AssertionKind, EvalSuite, check, evaluate, thro
 fn parses_shared_smoke_suite() {
     let suite: EvalSuite = serde_json::from_str(include_str!("../../../assets/evals/smoke.json"))
         .expect("shared suite must be valid JSON");
+    assert_eq!(suite.suite, "pocket-smoke-v2");
+    let json_case = suite
+        .cases
+        .iter()
+        .find(|case| case.id == "structured-json")
+        .unwrap();
+    assert_eq!(json_case.assertion.kind, AssertionKind::JsonSuccessTrue);
     assert_eq!(suite.cases.len(), 3);
     let verdicts = evaluate(
         &suite,
@@ -19,6 +26,8 @@ fn parses_shared_smoke_suite() {
 
 #[test]
 fn rejects_invalid_json_and_empty_contains() {
+    let legacy: Assertion = serde_json::from_str(r#"{"kind":"json_valid"}"#).unwrap();
+    assert!(check(&legacy, r#"{"success":false}"#).unwrap());
     assert!(
         !check(
             &Assertion {
@@ -39,6 +48,27 @@ fn rejects_invalid_json_and_empty_contains() {
         )
         .unwrap()
     );
+}
+
+#[test]
+fn structured_json_requires_a_top_level_boolean_success_set_to_true() {
+    let assertion: Assertion = serde_json::from_str(r#"{"kind":"json_success_true"}"#).unwrap();
+    assert!(check(&assertion, r#"{"success":true}"#).unwrap());
+    assert!(check(&assertion, r#" { "extra": 0, "success": true } "#).unwrap());
+    for response in [
+        r#"{"success":false}"#,
+        r#"{"success":"true"}"#,
+        r#"{"success":1}"#,
+        r#"{"success":null}"#,
+        "{}",
+        r#"{"nested":{"success":true}}"#,
+        r#"[{"success":true}]"#,
+        "true",
+        r#"{"success":true"#,
+        "```json\n{\"success\":true}\n```",
+    ] {
+        assert!(!check(&assertion, response).unwrap(), "{response}");
+    }
 }
 
 #[test]
