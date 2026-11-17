@@ -1,7 +1,8 @@
 # Axiom Edge
 
-**Open-source offline LLM harness for Android and iOS.** Import, download,
-chat with, benchmark and smoke-test small on-device language models.
+**Open-source mobile chat for your OpenAI and Z.AI API keys, with local LLMs.**
+Choose models from the live provider catalog, keep conversations on your phone,
+or download/import models for offline chat, benchmarks and smoke tests.
 
 **[Download Android APK (ARM64)](https://github.com/agent-axiom/axiom-edge/releases/latest/download/axiom-edge-android-arm64.apk)**
 
@@ -14,7 +15,9 @@ currently built.
 
 ## Status
 
-**v0.1.2 prototype.** User-supplied GGUF exports from Nothing A059P / Android 17
+**v0.2.0.** Cloud chat is separate from the local model lab.
+
+**Local inference prototype.** User-supplied GGUF exports from Nothing A059P / Android 17
 cover correctness checks and a warm generation benchmark. Those phone runs
 have not been independently reproduced. The strict `pocket-smoke-v2` suite
 requires a top-level boolean `success: true` for its JSON probe.
@@ -45,6 +48,10 @@ Performance measurements have not been independently verified.
 | Download Pocket Q4_1 (~192 MB) from HF | Yes | Yes |
 | MNN INT4 (~173 MB) direct HF download/import | Experimental, may fail | Not available |
 | Import complete MNN directory via system folder picker | Yes | Not available |
+| OpenAI Responses + Z.AI streaming cloud chat with your own API keys | Yes | Yes |
+| Live model catalog, search and manual model ID | Yes | Yes |
+| Persistent cloud chat history, search, rename, delete and drafts | Yes | Yes |
+| Markdown, code copy, stop/retry and per-chat instructions | Yes | Yes |
 | Streaming local chat | Yes | Yes, GGUF |
 | Smoke checks (exact, JSON `success: true`, contains) | Yes | Yes |
 | TTFT + native/sampled throughput + JSON export | Yes | Yes |
@@ -86,19 +93,44 @@ project is present. Generate iOS only on macOS; Linux Android CI uses
 `python3 tool/bootstrap.py --platforms android`.
 
 The bootstrap sets Android minSdk to 28 and Android Gradle Plugin to at least
-8.12.1, permits HTTP only for localhost
-(MNN internal API) and sets the iOS deployment target to 16.4. The generated
+8.12.1, excludes app data and provider keys from Android backup/device transfer,
+permits HTTP only for localhost
+(MNN internal API), configures private iOS Keychain entitlements and sets the
+iOS deployment target to 16.4. The generated
 Android project is included. The iOS shell is generated on macOS and ignored
 by Git to keep Linux dependency resolution working with Flutter 3.38.6.
 After resolving dependencies on macOS, `--configure-only` reapplies iOS 16.4
 to the generated Swift package. Run iOS builds with `--no-pub` afterwards;
 a new dependency resolution regenerates that package with Flutter's default target.
 
-On the phone:
+On the phone, cloud chat:
 
-1. Open **Models**, select **Download** for Pocket GGUF; or **Import GGUF**.
-2. Tap the stored model to load it.
-3. Open **Chat** for streaming responses.
+1. Open **Чаты**, then **Ключи API**. Add your OpenAI or Z.AI API key and
+   save it. The connection check fetches the provider's model catalog.
+2. Open the model selector, choose the provider, refresh the list and search
+   for a model. The catalog comes from your account at runtime; a model ID can
+   also be entered manually if the catalog is unavailable or the key cannot list models.
+3. Send a message. Responses stream as they arrive; **Стоп** preserves partial text.
+   Open history to search, resume, rename or delete a conversation. New chats can
+   use a different provider/model; an existing conversation keeps its original pair.
+4. Use per-chat instructions and copy messages/code as needed. Drafts and cloud
+   conversations survive app restarts. Keep a conversation export before uninstalling.
+
+Text chat is supported. A provider catalog can also contain image, audio,
+embedding or other specialized models; listing a model does not mean it supports
+this text interface. The provider reports access, capability, quota and billing
+errors when a request is made. No model list or availability is hardcoded.
+
+Z.AI uses its **general Model API** with prepaid/API balance, not the separate
+Coding Plan endpoint. OpenAI API billing is separate from a ChatGPT subscription.
+See [cloud chat and privacy](docs/CLOUD_CHAT.md).
+
+For local inference:
+
+1. Open **Локальные**, select **Скачать** for Pocket GGUF; or **Импорт GGUF**.
+2. Tap the stored model to load it and open its local chat.
+3. Send messages in **Локальный чат**. This original lab chat is in memory;
+   persistent history belongs to the separate cloud chat interface.
 4. Open **Checks**, tap **Начать замер** for the warm benchmark,
    or **Проверить ответы** for the separate `pocket-smoke-v2` suite.
 5. Export each result using its own JSON button through the share sheet.

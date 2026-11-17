@@ -1,21 +1,42 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 
+import '../chat/chat_state.dart';
+import 'cloud_chat_page.dart';
 import '../core/benchmark.dart';
 import '../core/lab_state.dart';
 import '../core/models.dart';
 
 class AxiomEdgeApp extends StatefulWidget {
-  const AxiomEdgeApp({super.key, required this.state});
+  const AxiomEdgeApp({super.key, required this.state, this.chats});
   final LabState state;
+  final ChatState? chats;
 
   @override
   State<AxiomEdgeApp> createState() => _AxiomEdgeAppState();
 }
 
-class _AxiomEdgeAppState extends State<AxiomEdgeApp> {
+class _AxiomEdgeAppState extends State<AxiomEdgeApp>
+    with WidgetsBindingObserver {
+  late final ChatState chats;
+
+  @override
+  void initState() {
+    super.initState();
+    chats = widget.chats ?? (ChatState()..init());
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) unawaited(chats.flush());
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    chats.dispose();
     widget.state.dispose();
     super.dispose();
   }
@@ -31,14 +52,15 @@ class _AxiomEdgeAppState extends State<AxiomEdgeApp> {
         colorSchemeSeed: const Color(0xFF33D6A6),
         scaffoldBackgroundColor: const Color(0xFF0B1015),
       ),
-      home: Home(state: widget.state),
+      home: Home(state: widget.state, chats: chats),
     );
   }
 }
 
 class Home extends StatefulWidget {
-  const Home({super.key, required this.state});
+  const Home({super.key, required this.state, required this.chats});
   final LabState state;
+  final ChatState chats;
 
   @override
   State<Home> createState() => _HomeState();
@@ -46,6 +68,29 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> {
   int page = 0;
+
+  Future<void> _openLocalChat(BuildContext context) =>
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => ListenableBuilder(
+            listenable: widget.state,
+            builder: (context, _) => Scaffold(
+              appBar: AppBar(
+                title: const Text('Локальный чат'),
+                actions: [
+                  if (widget.state.generating)
+                    IconButton(
+                      tooltip: 'Остановить генерацию',
+                      onPressed: widget.state.cancel,
+                      icon: const Icon(Icons.stop_circle_outlined),
+                    ),
+                ],
+              ),
+              body: SafeArea(child: ChatPage(widget.state)),
+            ),
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -60,7 +105,7 @@ class _HomeState extends State<Home> {
               style: TextStyle(letterSpacing: 1.7, fontWeight: FontWeight.w700),
             ),
             actions: [
-              if (s.generating)
+              if (page != 0 && s.generating)
                 IconButton(
                   tooltip: 'Остановить генерацию',
                   icon: const Icon(Icons.stop_circle_outlined),
@@ -70,47 +115,48 @@ class _HomeState extends State<Home> {
           ),
           body: Column(
             children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                color: const Color(0xFF131D25),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      s.active == null
-                          ? 'Движок не загружен'
-                          : '${s.active!.name} · ${s.active!.format.name.toUpperCase()}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      s.error ?? s.status,
-                      style: TextStyle(
-                        color: s.error == null
-                            ? Colors.white70
-                            : Colors.redAccent,
-                        fontSize: 12,
+              if (page != 0)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  color: const Color(0xFF131D25),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        s.active == null
+                            ? 'Движок не загружен'
+                            : '${s.active!.name} · ${s.active!.format.name.toUpperCase()}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
-                    ),
-                    if (s.progress != null) ...[
-                      const SizedBox(height: 8),
-                      LinearProgressIndicator(value: s.progress),
+                      const SizedBox(height: 3),
+                      Text(
+                        s.error ?? s.status,
+                        style: TextStyle(
+                          color: s.error == null
+                              ? Colors.white70
+                              : Colors.redAccent,
+                          fontSize: 12,
+                        ),
+                      ),
+                      if (s.progress != null) ...[
+                        const SizedBox(height: 8),
+                        LinearProgressIndicator(value: s.progress),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
               Expanded(
                 child: IndexedStack(
                   index: page,
                   children: [
-                    ModelPage(s, onSelected: () => setState(() => page = 1)),
-                    ChatPage(s),
+                    CloudChatPage(widget.chats),
+                    ModelPage(s, onSelected: () => _openLocalChat(context)),
                     EvalPage(s),
                   ],
                 ),
@@ -122,14 +168,14 @@ class _HomeState extends State<Home> {
             onDestinationSelected: (i) => setState(() => page = i),
             destinations: const [
               NavigationDestination(
-                icon: Icon(Icons.memory_outlined),
-                selectedIcon: Icon(Icons.memory),
-                label: 'Модели',
-              ),
-              NavigationDestination(
                 icon: Icon(Icons.chat_bubble_outline),
                 selectedIcon: Icon(Icons.chat_bubble),
-                label: 'Чат',
+                label: 'Чаты',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.memory_outlined),
+                selectedIcon: Icon(Icons.memory),
+                label: 'Локальные',
               ),
               NavigationDestination(
                 icon: Icon(Icons.monitor_heart_outlined),

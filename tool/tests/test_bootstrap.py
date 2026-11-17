@@ -1,5 +1,6 @@
 """Template compatibility checks; no Flutter or platform SDK is required."""
 import tempfile
+import plistlib
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -125,6 +126,58 @@ class BootstrapTemplateTest(unittest.TestCase):
                     first = snapshot(root)
                     bootstrap.main(requested)
                     self.assertEqual(first, snapshot(root))
+
+    def test_android_keys_and_chats_are_excluded_from_backup_and_transfer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_templates(root, ("android",))
+            with patch.object(bootstrap, "ROOT", root):
+                bootstrap._configure_android()
+            app = ET.parse(root / "android/app/src/main/AndroidManifest.xml").getroot().find("application")
+            ns = "{http://schemas.android.com/apk/res/android}"
+            self.assertEqual(app.get(ns + "allowBackup"), "false")
+            self.assertEqual(app.get(ns + "fullBackupContent"), "@xml/backup_rules")
+            self.assertEqual(app.get(ns + "dataExtractionRules"), "@xml/data_extraction_rules")
+            legacy = ET.parse(root / "android/app/src/main/res/xml/backup_rules.xml").getroot()
+            modern = ET.parse(root / "android/app/src/main/res/xml/data_extraction_rules.xml").getroot()
+            for branch in (legacy, modern.find("cloud-backup"), modern.find("device-transfer")):
+                exclusions = {(e.get("domain"), e.get("path")) for e in branch.findall("exclude")}
+                self.assertIn(("sharedpref", "."), exclusions)
+                self.assertIn(("file", "."), exclusions)
+                self.assertIn(("root", "."), exclusions)
+
+    def test_ios_keychain_entitlements_apply_only_to_app_build_configurations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_templates(root, ("ios",))
+            project = root / "ios/Runner.xcodeproj/project.pbxproj"
+            blocks = []
+            for target in ("Runner", "RunnerTests"):
+                for name in ("Debug", "Profile", "Release"):
+                    blocks.append(
+                        f'{target}{name} = {{\n'
+                        '    buildSettings = {\n'
+                        '        IPHONEOS_DEPLOYMENT_TARGET = 13.0;\n'
+                        f'        INFOPLIST_FILE = {target}/Info.plist;\n'
+                        f'    }};\n    name = {name};\n}};\n'
+                    )
+            project.write_text("".join(blocks))
+            entitlement = root / "ios/Runner/Release.entitlements"
+            entitlement.parent.mkdir(parents=True)
+            entitlement.write_bytes(plistlib.dumps({"com.apple.developer.applesignin": ["Default"]}))
+            with patch.object(bootstrap, "ROOT", root):
+                bootstrap._configure_ios()
+                first = snapshot(root)
+                bootstrap._configure_ios()
+                self.assertEqual(first, snapshot(root))
+            contents = project.read_text()
+            self.assertEqual(contents.count("CODE_SIGN_ENTITLEMENTS ="), 3)
+            self.assertEqual(contents.count("Runner/DebugProfile.entitlements;"), 2)
+            self.assertEqual(contents.count("Runner/Release.entitlements;"), 1)
+            for name in ("DebugProfile", "Release"):
+                data = plistlib.loads((root / f"ios/Runner/{name}.entitlements").read_bytes())
+                self.assertEqual(data["keychain-access-groups"], [])
+            self.assertEqual(plistlib.loads(entitlement.read_bytes())["com.apple.developer.applesignin"], ["Default"])
 
     def test_existing_ios_on_linux_fails_before_any_mutation(self):
         with tempfile.TemporaryDirectory() as temporary:
