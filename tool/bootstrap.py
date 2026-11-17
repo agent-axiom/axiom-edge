@@ -6,6 +6,7 @@ Idempotent; no SDK binaries or model weights are vendored in the repository.
 from __future__ import annotations
 
 import argparse
+import plistlib
 import re
 import subprocess
 import sys
@@ -92,7 +93,35 @@ def _configure_android() -> None:
         contents = contents.replace('<application',
             '<application android:networkSecurityConfig="@xml/network_security_config"', 1)
     contents = contents.replace('android:label="axiom_edge"', 'android:label="Axiom Edge"')
+    # Never restore encrypted provider keys without their device-bound keystore.
+    # Explicit extraction rules also cover OEM device-to-device transfers.
+    for name, value in {
+        "allowBackup": "false",
+        "fullBackupContent": "@xml/backup_rules",
+        "dataExtractionRules": "@xml/data_extraction_rules",
+    }.items():
+        attribute = f"android:{name}="
+        if attribute in contents:
+            contents = re.sub(rf'{attribute}"[^"]*"', f'{attribute}"{value}"', contents)
+        else:
+            contents = contents.replace("<application", f'<application {attribute}"{value}"', 1)
     manifest.write_text(contents)
+    xml_directory = ROOT / "android/app/src/main/res/xml"
+    xml_directory.mkdir(parents=True, exist_ok=True)
+    exclusions = "".join(
+        f'        <exclude domain="{domain}" path="." />\n'
+        for domain in ("root", "file", "database", "sharedpref", "external")
+    )
+    (xml_directory / "backup_rules.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<full-backup-content>\n'
+        + exclusions + '</full-backup-content>\n'
+    )
+    (xml_directory / "data_extraction_rules.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<data-extraction-rules>\n'
+        '    <cloud-backup>\n' + exclusions + '    </cloud-backup>\n'
+        '    <device-transfer>\n' + exclusions + '    </device-transfer>\n'
+        '</data-extraction-rules>\n'
+    )
     config = ROOT / "android/app/src/main/res/xml/network_security_config.xml"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text('''<?xml version="1.0" encoding="utf-8"?>
@@ -150,7 +179,34 @@ def _configure_ios(*, require_generated_package: bool = False) -> None:
         original = pbxproj.read_text()
         changed = re.sub(r"IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;",
                          "IPHONEOS_DEPLOYMENT_TARGET = 16.4;", original)
+        # Flutter generates the iOS shell on macOS. Give each app build
+        # configuration an explicit private Keychain entitlement file.
+        def keychain_settings(match: re.Match[str]) -> str:
+            body = match.group("body")
+            if "INFOPLIST_FILE = Runner/Info.plist;" not in body:
+                return match.group(0)
+            name = "Release" if match.group("name") == "Release" else "DebugProfile"
+            setting = f'CODE_SIGN_ENTITLEMENTS = Runner/{name}.entitlements;'
+            if "CODE_SIGN_ENTITLEMENTS =" in body:
+                body = re.sub(r"CODE_SIGN_ENTITLEMENTS = [^;]+;", setting, body)
+            else:
+                body = body.replace("INFOPLIST_FILE = Runner/Info.plist;",
+                                    setting + "\n\t\t\t\tINFOPLIST_FILE = Runner/Info.plist;")
+            return match.group("start") + body + match.group("end")
+
+        changed = re.sub(
+            r"(?P<start>buildSettings = \{)(?P<body>.*?)(?P<end>\n\s*\};\n\s*name = (?P<name>Debug|Release|Profile);)",
+            keychain_settings, changed, flags=re.DOTALL,
+        )
         pbxproj.write_text(changed)
+        runner = ROOT / "ios/Runner"
+        runner.mkdir(parents=True, exist_ok=True)
+        for filename in ("DebugProfile.entitlements", "Release.entitlements"):
+            entitlement = runner / filename
+            data = plistlib.loads(entitlement.read_bytes()) if entitlement.exists() else {}
+            # No shared access group or iCloud synchronization: app-private keys.
+            data.setdefault("keychain-access-groups", [])
+            entitlement.write_bytes(plistlib.dumps(data, sort_keys=False))
 
 
 def main(platforms: str | None = None, *, configure_only: bool = False) -> None:

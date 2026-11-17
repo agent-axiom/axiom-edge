@@ -1,7 +1,7 @@
 import 'benchmark.dart';
 import 'models.dart';
 
-const appVersion = '0.1.2';
+const appVersion = '0.2.0';
 const smokeGeneration = {
   'max_tokens': 96,
   'temperature': 0.0,

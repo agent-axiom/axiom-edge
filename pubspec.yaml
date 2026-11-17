@@ -1,7 +1,7 @@
 name: axiom_edge
-description: Offline model lab for Android and iOS — import, chat, benchmark and evaluate local LLMs.
+description: Private BYOK chats with OpenAI and Z.AI, plus local LLMs, benchmarks and evaluations.
 publish_to: none
-version: 0.1.2+4
+version: 0.2.0+5
 
 environment:
   sdk: '>=3.10.7 <4.0.0'
@@ -17,6 +17,8 @@ dependencies:
   path: ^1.9.1
   http: ^1.6.0
   crypto: ^3.0.8
+  flutter_secure_storage: 11.2.0
+  flutter_markdown_plus: 1.0.12
   # 13.2+ requires the newer FlutterFramework SwiftPM package on iOS.
   # Keep these compatible with the pinned Flutter 3.38.6 toolchain.
   device_info_plus: 13.1.0
