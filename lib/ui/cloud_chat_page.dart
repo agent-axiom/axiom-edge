@@ -907,6 +907,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
                     ? null
                     : () => _run(() async {
                         await widget.state.saveKey(_provider, _key.text.trim());
+                        if (!mounted) return;
                         if (widget.state.error == null) {
                           _key.clear();
                           _failedRemovals.remove(_provider);

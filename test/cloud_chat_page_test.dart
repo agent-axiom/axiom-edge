@@ -263,6 +263,7 @@ void main() {
       expect(tester.widget<TextButton>(remove).onPressed, isNotNull);
       keys.failDelete = false;
       await tester.ensureVisible(remove);
+      await tester.pumpAndSettle();
       await tester.tap(remove);
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Удалить ключ'));
